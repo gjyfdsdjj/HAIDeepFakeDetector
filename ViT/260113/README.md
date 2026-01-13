@@ -1,16 +1,6 @@
-swit train_facecrop.py에서 vit로 교체
+ViT-260113-1
 
-train_transform = transforms.Compose([
-    transforms.ToPILImage(),
-    transforms.RandomResizedCrop(IMG_SIZE, scale=(0.85, 1.0), ratio=(0.9, 1.1)),
-    transforms.RandomHorizontalFlip(0.5),
-    RandomJPEGCompression(30, 100, p=0.5),
-    transforms.RandomApply([transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0))], p=0.2),
-    transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.05, hue=0.02),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
 
-이 부분을 바꿈
 
-swit에서 원복하고 에폭이랑 batch size 변경해서 다시 해볼 예정
+에폭 16 / batch 크기 16으로 늘렸고 train\_transform 원복해서 해보았으나 점수가 더 떨어져 다시 vit-260112의 train\_transform으로 복구하고 에폭 16/batch 크기는 그대로 가도 될 것 같습니다. 현재 cpu를 이용하여 학습을 진행 중이나 너무 오래 걸리는 감이 없지 않아 gpu로 학습 진행해보려 합니다.
+
