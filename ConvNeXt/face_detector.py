@@ -59,3 +59,23 @@ class FaceDetector:
         face_crop = image[y1:y2, x1:x2]
         
         return face_crop if face_crop.size > 0 else None
+    
+    def crop_face_with_fallback(self, image, target_size=None):
+        """
+        얼굴 검출 시도, 실패 시 원본 반환
+        
+        Args:
+            image: BGR 이미지
+            target_size: 리사이즈 목표 크기 (width, height)
+        
+        Returns:
+            크롭된 얼굴 이미지 또는 원본 이미지 (target_size로 리사이즈됨)
+        """
+        face = self.detect_face(image)
+        result = face if face is not None else image
+        
+        # target_size가 지정된 경우 리사이즈
+        if target_size is not None and result is not None:
+            result = cv2.resize(result, target_size, interpolation=cv2.INTER_LINEAR)
+        
+        return result
