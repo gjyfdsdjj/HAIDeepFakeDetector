@@ -1,5 +1,5 @@
 """
-딥페이크 탐지 추론
+향상된 딥페이크 탐지 추론 - 비디오 정확도 개선
 """
 import torch
 import torch.nn.functional as F
@@ -17,13 +17,13 @@ from model import DeepfakeDetector
 from face_detector import FaceDetector
 
 
-class TestDataset(Dataset):
-    """테스트 데이터셋"""
-    def __init__(self, test_dir, transform=None, use_face_detection=True, num_frames=8, image_size=224):
+class EnhancedTestDataset(Dataset):
+    """향상된 테스트 데이터셋 - 비디오 프레임 증가"""
+    def __init__(self, test_dir, transform=None, use_face_detection=True, num_frames=16, image_size=224):
         self.test_dir = Path(test_dir)
         self.transform = transform
         self.use_face_detection = use_face_detection
-        self.num_frames = num_frames
+        self.num_frames = num_frames  # 더 많은 프레임
         self.image_size = image_size
         
         if use_face_detection:
@@ -57,7 +57,7 @@ class TestDataset(Dataset):
         
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # 얼굴 검출 (학습과 동일한 방식)
+        # 얼굴 검출
         if self.use_face_detection:
             img = self.face_detector.crop_face_with_fallback(
                 img,
@@ -83,11 +83,11 @@ class TestDataset(Dataset):
         return img.unsqueeze(0)  # [1, C, H, W]
     
     def _load_video(self, video_path):
-        """비디오에서 프레임 추출"""
+        """비디오에서 프레임 추출 - 더 많은 프레임 사용"""
         cap = cv2.VideoCapture(str(video_path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # 균등하게 프레임 선택
+        # 더 많은 프레임 추출
         if total_frames <= self.num_frames:
             frame_indices = list(range(total_frames))
         else:
@@ -104,14 +104,21 @@ class TestDataset(Dataset):
             
             # 얼굴 검출
             if self.use_face_detection:
-                face = self.face_detector.detect_face(frame)
-                if face is not None:
-                    frame = face
-            
-            # 리사이즈 (frame이 유효한지 확인)
-            if frame is not None and isinstance(frame, np.ndarray) and frame.shape[0] > 0:
-                frame = cv2.resize(frame, (self.image_size, self.image_size))
+                frame = self.face_detector.crop_face_with_fallback(
+                    frame,
+                    target_size=(self.image_size, self.image_size)
+                )
             else:
+                # 중앙 크롭 후 리사이즈
+                h, w = frame.shape[:2]
+                size = min(h, w)
+                y1 = (h - size) // 2
+                x1 = (w - size) // 2
+                frame = frame[y1:y1+size, x1:x1+size]
+                frame = cv2.resize(frame, (self.image_size, self.image_size))
+            
+            # 유효성 확인
+            if not isinstance(frame, np.ndarray) or len(frame.shape) != 3 or frame.shape[0] == 0:
                 continue
             
             # Transform
@@ -131,10 +138,10 @@ class TestDataset(Dataset):
         return torch.stack(frames)
 
 
-def inference(model_path, test_dir, output_csv, model_name="convnext_small", 
-              image_size=224, batch_size=32, use_face_detection=True, 
-              num_frames=8, device="cuda"):
-    """추론 실행"""
+def inference_enhanced(model_path, test_dir, output_csv, model_name="convnext_small", 
+                      image_size=224, batch_size=32, use_face_detection=True, 
+                      num_frames=16, device="cuda"):
+    """향상된 추론 실행 - 비디오 정확도 개선"""
     
     # Device
     device = torch.device(device if torch.cuda.is_available() else "cpu")
@@ -147,7 +154,7 @@ def inference(model_path, test_dir, output_csv, model_name="convnext_small",
     ])
     
     # Dataset
-    dataset = TestDataset(
+    dataset = EnhancedTestDataset(
         test_dir=test_dir,
         transform=transform,
         use_face_detection=use_face_detection,
@@ -156,6 +163,7 @@ def inference(model_path, test_dir, output_csv, model_name="convnext_small",
     )
     
     print(f"\nTotal test files: {len(dataset)}")
+    print(f"Frames per video: {num_frames}")
     
     # Model
     model = DeepfakeDetector(model_name=model_name, pretrained=False, num_classes=1)
@@ -182,10 +190,15 @@ def inference(model_path, test_dir, output_csv, model_name="convnext_small",
             logits = model(frames)  # [N, 1]
             probs = torch.sigmoid(logits)  # [N, 1]
             
-            # 비디오 추론 개선: 중앙값 사용 (평균보다 아웃라이어에 강함)
+            # 비디오 추론 개선: 여러 통계 사용
             if probs.shape[0] > 1:  # 비디오 (여러 프레임)
-                # 중앙값 사용
-                avg_prob = probs.median().item()
+                # 평균, 중앙값, 최대값의 가중 평균
+                mean_prob = probs.mean().item()
+                median_prob = probs.median().item()
+                max_prob = probs.max().item()
+                
+                # 가중 평균: 평균 50%, 중앙값 30%, 최대값 20%
+                avg_prob = 0.5 * mean_prob + 0.3 * median_prob + 0.2 * max_prob
             else:  # 이미지 (단일 프레임)
                 avg_prob = probs.mean().item()
             
@@ -196,7 +209,7 @@ def inference(model_path, test_dir, output_csv, model_name="convnext_small",
     
     # CSV 저장
     df = pd.DataFrame(results)
-    df.columns = ['filename', 'prob']  # 제출 양식에 맞게 컬럼명 변경
+    df.columns = ['filename', 'prob']
     df.to_csv(output_csv, index=False)
     
     print(f"\n✓ Results saved: {output_csv}")
